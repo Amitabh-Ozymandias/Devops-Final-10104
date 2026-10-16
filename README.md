@@ -264,6 +264,10 @@ kubectl port-forward -n monitoring svc/monitoring-grafana 3001:80
 # http://localhost:3001  (admin / spendwise-admin) → Dashboards → SpendWise - API Overview
 ```
 
+The backend's `/metrics` endpoint inside the cluster, in Prometheus text format. It shows `http_requests_total` per endpoint/method/status and the custom `spendwise_expenses_created_total` counter:
+
+![curl /metrics output](docs/screenshots/m9-metrics-endpoint.png)
+
 Prometheus (kube-prometheus-stack in minikube) scraping both backend pods through the chart's ServiceMonitor: `serviceMonitor/spendwise/spendwise-backend/0`, **2/2 up**:
 
 ![Prometheus target health: spendwise-backend 2/2 up](docs/screenshots/m9-prometheus-targets-spendwise.png)
