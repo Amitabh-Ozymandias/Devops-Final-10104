@@ -122,6 +122,22 @@ Trivy runs as a pinned container image (`aquasec/trivy:0.58.1`) instead of throu
 
 The images must be **Public** under **GitHub → Packages** so a cluster can pull them without credentials. The alternative is to create a pull secret and set `global.imagePullSecrets`.
 
+A green run triggered by a push to `main`: tests and frontend build, then build, scan and push for both images, then the kind deploy ([run 38876693246](https://github.com/Amitabh-Ozymandias/Devops-Final-10104/actions/runs/38876693246)):
+
+![CI/CD run: all five jobs green](docs/screenshots/m5-pipeline-run-green.png)
+
+Both images in GHCR, tagged only with full commit SHAs:
+
+![GHCR spendwise-backend with SHA tags](docs/screenshots/m5-ghcr-backend-sha-tags.png)
+![GHCR spendwise-frontend with SHA tags](docs/screenshots/m5-ghcr-frontend-sha-tags.png)
+
+<details>
+<summary>Pipeline graph close-up</summary>
+
+![Pipeline graph](docs/screenshots/m5-pipeline-graph.png)
+
+</details>
+
 ---
 
 ## 3. Security scan (Trivy)
@@ -129,6 +145,18 @@ The images must be **Public** under **GitHub → Packages** so a cluster can pul
 Trivy scans the OS packages (Debian for the backend, Alpine for the frontend) and the language dependencies (Python wheels, npm packages) of each built image. It checks them against public CVE databases. The pipeline only fails on HIGH or CRITICAL issues that have a fix available. Both Dockerfiles run `apt-get upgrade` or `apk upgrade` to pull in OS patches, so a clean scan means no known, fixable, serious vulnerability in either image at build time. If a CVE shows up, the Trivy table names the package, the installed version, and the fixed version. The fix is to bump that dependency or the base image.
 
 **A real finding from this project.** The first scan of the backend image failed with 3 HIGH CVEs in `starlette` 0.41.3, the web framework underneath FastAPI. One was **CVE-2025-62727**: an attacker could send a crafted HTTP `Range` header that makes Starlette merge byte ranges inefficiently, which burns CPU (a denial of service). Trivy reported that version 0.49.1 fixes it. Upgrading to FastAPI 0.143.0 / Starlette 1.7.0 (and `prometheus-fastapi-instrumentator` 8.1.0, which supports Starlette 1.x) brought the scan to `Total: 0 (HIGH: 0, CRITICAL: 0)`.
+
+The Trivy step in the pipeline, scanning `spendwise-backend:<sha>` (Debian 13.7) and passing with `Total: 0 (HIGH: 0, CRITICAL: 0)`:
+
+![Trivy scan result: 0 HIGH, 0 CRITICAL](docs/screenshots/m6-trivy-backend-3-result.png)
+
+<details>
+<summary>Earlier part of the Trivy log (DB download, scanners enabled)</summary>
+
+![Trivy step start](docs/screenshots/m6-trivy-backend-1-start.png)
+![Trivy scanning](docs/screenshots/m6-trivy-backend-2-scanning.png)
+
+</details>
 
 ---
 
@@ -154,6 +182,31 @@ $(terraform output -raw configure_kubectl)     # point kubectl at the cluster
 > cd terraform && terraform destroy
 > ```
 > (If you also deployed to EKS with [scripts/bootstrap-cluster.sh](scripts/bootstrap-cluster.sh), use [scripts/teardown.sh](scripts/teardown.sh) instead. It removes the load balancer first.)
+
+**Run on a Free-plan AWS account** (`create_eks = false`, region `ap-southeast-2`, because Free-plan accounts are limited to one region). `terraform plan` created 11 resources: the VPC, 2 public subnets in `ap-southeast-2a`/`2b`, an internet gateway, route tables and the default ACL/security group:
+
+![terraform validate and plan](docs/screenshots/m7-terraform-plan-1-validate.png)
+![terraform plan: 11 to add](docs/screenshots/m7-terraform-plan-8-summary.png)
+
+`terraform apply`, followed by `terraform destroy` to leave nothing running:
+
+![terraform apply complete: 11 added](docs/screenshots/m7-terraform-apply-3-complete.png)
+![terraform destroy complete: 11 destroyed](docs/screenshots/m7-terraform-destroy-2-complete.png)
+
+<details>
+<summary>Full plan, apply and destroy output (9 more screenshots)</summary>
+
+![plan part 2](docs/screenshots/m7-terraform-plan-2.png)
+![plan part 3](docs/screenshots/m7-terraform-plan-3.png)
+![plan part 4](docs/screenshots/m7-terraform-plan-4.png)
+![plan part 5](docs/screenshots/m7-terraform-plan-5.png)
+![plan: public subnet in ap-southeast-2a](docs/screenshots/m7-terraform-plan-6-subnet-a.png)
+![plan: public subnet in ap-southeast-2b](docs/screenshots/m7-terraform-plan-7-subnet-b.png)
+![apply start](docs/screenshots/m7-terraform-apply-1-start.png)
+![apply creating resources](docs/screenshots/m7-terraform-apply-2-creating.png)
+![destroy start](docs/screenshots/m7-terraform-destroy-1-start.png)
+
+</details>
 
 ---
 
@@ -186,6 +239,14 @@ The chart ([helm/spendwise/](helm/spendwise/)) deploys:
 - A ServiceMonitor and a Grafana dashboard ConfigMap.
 
 All pods run as non-root with every Linux capability dropped.
+
+Deployed on minikube: 2 backend and 2 frontend replicas plus Postgres, all `Running`; ClusterIP Services; the Helm release `deployed`; and the nginx Ingress:
+
+![kubectl get pods/svc, helm list, kubectl get ingress](docs/screenshots/m8-kubectl-pods-svc-helm-ingress.png)
+
+The app served through the Ingress (`kubectl port-forward` to the ingress-nginx controller, port 8080):
+
+![SpendWise via the Ingress](docs/screenshots/m8-app-via-ingress.png)
 
 ---
 
