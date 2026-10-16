@@ -1,0 +1,13 @@
+{{- if .Values.metrics.grafanaDashboard.enabled -}}
+# Picked up automatically by the Grafana dashboard sidecar in kube-prometheus-stack
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "spendwise.fullname" . }}-dashboard
+  labels:
+    {{- include "spendwise.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+data:
+  spendwise.json: |-
+{{ .Files.Get "dashboards/spendwise.json" | indent 4 }}
+{{- end }}

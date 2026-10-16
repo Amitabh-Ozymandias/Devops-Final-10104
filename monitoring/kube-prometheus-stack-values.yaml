@@ -1,0 +1,67 @@
+# Values for prometheus-community/kube-prometheus-stack
+#   helm upgrade --install monitoring prometheus-community/kube-prometheus-stack \
+#     -n monitoring -f monitoring/kube-prometheus-stack-values.yaml
+#
+# Installs Prometheus (via the Prometheus Operator) and Grafana.
+
+# Trim components we don't need so everything fits on two t3.medium nodes
+alertmanager:
+  enabled: false
+
+kubeEtcd:
+  enabled: false
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeProxy:
+  enabled: false
+
+prometheus:
+  prometheusSpec:
+    retention: 2d
+    scrapeInterval: 15s
+    # Discover ServiceMonitors in every namespace. The SpendWise chart's
+    # ServiceMonitor also carries the label release=monitoring.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    serviceMonitorNamespaceSelector: {}
+    podMonitorSelectorNilUsesHelmValues: false
+    resources:
+      requests:
+        cpu: 100m
+        memory: 400Mi
+      limits:
+        memory: 1Gi
+
+grafana:
+  enabled: true
+  # Change this (or pass --set grafana.adminPassword=...) before a real deployment
+  adminPassword: spendwise-admin
+  service:
+    type: ClusterIP
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      labelValue: "1"
+      # Load dashboard ConfigMaps from all namespaces (the app's lives in "spendwise")
+      searchNamespace: ALL
+    datasources:
+      enabled: true
+      defaultDatasourceEnabled: true
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+
+prometheus-node-exporter:
+  resources:
+    requests:
+      cpu: 20m
+      memory: 32Mi
+
+kube-state-metrics:
+  resources:
+    requests:
+      cpu: 20m
+      memory: 64Mi
