@@ -1,0 +1,12 @@
+SpendWise {{ include "spendwise.imageTag" . }} is deployed to namespace "{{ .Release.Namespace }}".
+
+Check the pods:
+  kubectl get pods -n {{ .Release.Namespace }}
+
+Find the Ingress address:
+  kubectl get ingress -n {{ .Release.Namespace }}
+{{- if .Values.ingress.host }}
+Then open http://{{ .Values.ingress.host }}/
+{{- else }}
+Then open http://<ADDRESS>/ (the ingress-nginx load balancer hostname)
+{{- end }}

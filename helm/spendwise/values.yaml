@@ -1,0 +1,88 @@
+# Images are published by GitHub Actions as
+#   <imageRegistry>/spendwise-backend:<git-sha>
+#   <imageRegistry>/spendwise-frontend:<git-sha>
+global:
+  imageRegistry: ghcr.io/your-github-username
+  # Set by CI to the commit SHA: --set global.imageTag=$GITHUB_SHA
+  imageTag: ""
+  imagePullSecrets: []
+  # - name: ghcr-pull-secret
+
+backend:
+  replicaCount: 2
+  image:
+    repository: spendwise-backend
+    pullPolicy: IfNotPresent
+  port: 8000
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  corsOrigins: "*"
+
+frontend:
+  replicaCount: 2
+  image:
+    repository: spendwise-frontend
+    pullPolicy: IfNotPresent
+  port: 8080
+  resources:
+    requests:
+      cpu: 50m
+      memory: 32Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+postgresql:
+  image: postgres:16-alpine
+  auth:
+    database: spendwise
+    username: spendwise
+    # Override at install time: --set postgresql.auth.password=...
+    password: ""
+  persistence:
+    # Requires a working StorageClass (on EKS: the aws-ebs-csi-driver add-on).
+    # Disabled by default so the chart works on a fresh cluster; data then
+    # lives only as long as the postgres pod.
+    enabled: false
+    size: 1Gi
+    storageClass: ""
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+ingress:
+  enabled: true
+  className: nginx
+  # Leave empty to accept any host (e.g. the load balancer's DNS name)
+  host: ""
+  annotations: {}
+  tls: []
+
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+
+metrics:
+  serviceMonitor:
+    enabled: true
+    interval: 15s
+    # Must match the kube-prometheus-stack release label selector
+    labels:
+      release: monitoring
+  grafanaDashboard:
+    enabled: true

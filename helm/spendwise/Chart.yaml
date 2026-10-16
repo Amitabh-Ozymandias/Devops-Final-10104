@@ -1,0 +1,12 @@
+apiVersion: v2
+name: spendwise
+description: SpendWise expense tracker - FastAPI backend, React frontend and PostgreSQL
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - fastapi
+  - react
+  - postgresql
+maintainers:
+  - name: SpendWise team
