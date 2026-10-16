@@ -33,6 +33,12 @@ variable "az_count" {
   }
 }
 
+variable "create_eks" {
+  description = "Create the EKS cluster and node group (billed hourly; not allowed on AWS Free-plan accounts)"
+  type        = bool
+  default     = false
+}
+
 variable "cluster_name" {
   description = "EKS cluster name"
   type        = string

@@ -11,14 +11,14 @@ output "public_subnet_ids" {
 }
 
 output "cluster_name" {
-  value = module.eks.cluster_name
+  value = var.create_eks ? module.eks[0].cluster_name : null
 }
 
 output "cluster_endpoint" {
-  value = module.eks.cluster_endpoint
+  value = var.create_eks ? module.eks[0].cluster_endpoint : null
 }
 
 output "configure_kubectl" {
   description = "Run this to point kubectl at the new cluster"
-  value       = "aws eks update-kubeconfig --region ${var.aws_region} --name ${module.eks.cluster_name}"
+  value       = var.create_eks ? "aws eks update-kubeconfig --region ${var.aws_region} --name ${module.eks[0].cluster_name}" : "EKS not created (create_eks = false)"
 }

@@ -45,11 +45,14 @@ module "vpc" {
 }
 
 # ---------------------------------------------------------------------------
-# EKS cluster with one managed node group
+# EKS cluster with one managed node group.
+# Only created when create_eks = true: EKS is billed hourly and is blocked on
+# AWS Free-plan accounts, while the VPC above is free.
 # ---------------------------------------------------------------------------
 module "eks" {
   source  = "terraform-aws-modules/eks/aws"
   version = "~> 20.31"
+  count   = var.create_eks ? 1 : 0
 
   cluster_name    = var.cluster_name
   cluster_version = var.kubernetes_version

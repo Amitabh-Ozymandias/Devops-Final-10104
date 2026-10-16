@@ -6,6 +6,9 @@ project_name        = "spendwise"
 environment         = "dev"
 vpc_cidr            = "10.20.0.0/16"
 az_count            = 2
+# EKS is billed hourly and blocked on AWS Free-plan accounts.
+# false = create only the (free) VPC + public subnets; true = also create EKS.
+create_eks          = false
 cluster_name        = "spendwise-eks"
 kubernetes_version  = "1.33"
 node_instance_types = ["t3.medium"]
