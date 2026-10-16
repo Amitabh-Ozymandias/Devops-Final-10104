@@ -6,7 +6,8 @@ SpendWise is a small personal finance app. You record expenses (title, amount, c
  git push ──► GitHub Actions ──► pytest + ruff ─┐
                                  npm build ─────┼─► docker build ─► Trivy scan ─► push to GHCR (:<sha>)
                                                                                       │
- Terraform ──► AWS VPC (2 public subnets) + EKS ◄── helm upgrade --install ◄──────────┘
+                     kind cluster (CI runner / WSL) ◄── helm upgrade --install ◄──────┘
+ Terraform ──► AWS VPC + EKS (optional, paid)   │
                                                 │
        Ingress (nginx) ── /     ──► frontend (React + Nginx) ×2
                        └─ /api  ──► backend (FastAPI) ×2 ──► PostgreSQL
@@ -20,10 +21,10 @@ SpendWise is a small personal finance app. You record expenses (title, amount, c
 | Frontend | React 18 + Vite, served by unprivileged Nginx | [frontend/](frontend/) |
 | Tests | pytest + in-memory SQLite, ruff lint | [backend/tests/](backend/tests/) |
 | Containers | Multi-stage Dockerfiles, non-root, Docker Compose | [docker-compose.yml](docker-compose.yml) |
-| CI/CD | GitHub Actions → GHCR (commit-SHA tags) → EKS | [.github/workflows/ci-cd.yml](.github/workflows/ci-cd.yml) |
+| CI/CD | GitHub Actions → GHCR (commit-SHA tags) → Helm deploy to kind | [.github/workflows/ci-cd.yml](.github/workflows/ci-cd.yml) |
 | Security | Trivy image scan, fails on HIGH/CRITICAL | same workflow |
 | Infrastructure | Terraform: VPC + EKS + managed node group | [terraform/](terraform/) |
-| Orchestration | Kubernetes namespace + Helm chart + Ingress | [k8s/](k8s/), [helm/spendwise/](helm/spendwise/) |
+| Orchestration | Kubernetes (kind) + Helm chart + Ingress | [k8s/](k8s/), [helm/spendwise/](helm/spendwise/) |
 | Observability | kube-prometheus-stack (Prometheus + Grafana) | [monitoring/](monitoring/) |
 
 ---
@@ -83,23 +84,17 @@ The tests use an in-memory SQLite database. [backend/tests/conftest.py](backend/
    - `docker build`
    - **Trivy** scan with `--severity HIGH,CRITICAL --exit-code 1 --ignore-unfixed`. Any fixable HIGH or CRITICAL CVE fails the pipeline before the image is pushed.
    - Push to `ghcr.io/<owner>/spendwise-<service>:<git-commit-sha>`. Images are never tagged `latest`.
-4. **deploy** (opt-in): `helm upgrade --install` on EKS with `global.imageTag=<sha>`.
+4. **deploy** (push to `main` only), with no cloud account or secrets needed:
+   - creates a temporary **kind** Kubernetes cluster on the runner from [k8s/kind-config.yaml](k8s/kind-config.yaml), and installs ingress-nginx
+   - `helm upgrade --install` of the chart with `global.imageTag=<sha>`, waiting until every pod is Ready
+   - checks that both Deployments run the images for **this commit**
+   - smoke-tests through the Ingress: `/` serves the React app, and `/api` creates and lists an expense
+
+The deploy job runs [scripts/local-cluster.sh](scripts/local-cluster.sh), the same script you use to run the cluster locally in WSL. What CI verifies is exactly what you demo.
 
 Trivy runs as a pinned container image (`aquasec/trivy:0.58.1`) instead of through a third-party action. This keeps the scanner version fixed and auditable.
 
-### Enabling the deploy job
-
-In the GitHub repository, under **Settings → Secrets and variables → Actions**:
-
-| Type | Name | Value |
-|---|---|---|
-| Secret | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | IAM user that can access the cluster |
-| Secret | `POSTGRES_PASSWORD` | Database password used in the cluster |
-| Variable | `DEPLOY_ENABLED` | `true` |
-| Variable | `AWS_REGION` | e.g. `us-east-1` |
-| Variable | `EKS_CLUSTER_NAME` | `spendwise-eks` |
-
-After the first pipeline run, open both packages under **GitHub → Packages** and set their visibility to **Public**. Otherwise the cluster cannot pull them. The alternative is to create a pull secret and set `global.imagePullSecrets`.
+The images must be **Public** under **GitHub → Packages** so a cluster can pull them without credentials. The alternative is to create a pull secret and set `global.imagePullSecrets`.
 
 ---
 
@@ -128,20 +123,24 @@ terraform apply                                # ~15 minutes
 $(terraform output -raw configure_kubectl)     # point kubectl at the cluster
 ```
 
-> **Cost warning.** The EKS control plane and nodes are billed hourly. Tear everything down when you finish:
+> **Cost warning.** `terraform init`, `validate` and `plan` are free. Only `terraform apply` creates billable resources: the EKS control plane and nodes, about $0.25–0.30 per hour. The app itself never needs EKS, because CI and the local demo both use kind. If you apply for the M7 console screenshots, destroy right after:
 > ```bash
-> ./scripts/teardown.sh   # uninstalls Helm releases (removes the NLB), then terraform destroy
+> cd terraform && terraform destroy
 > ```
+> (If you also deployed to EKS with [scripts/bootstrap-cluster.sh](scripts/bootstrap-cluster.sh), use [scripts/teardown.sh](scripts/teardown.sh) instead. It removes the load balancer first.)
 
 ---
 
 ## 5. Kubernetes + Helm
 
 ```bash
-# One command: namespaces, Prometheus/Grafana, ingress-nginx and the app
+# One command: kind cluster, namespaces, Prometheus/Grafana, ingress-nginx and the app (free)
+./scripts/local-cluster.sh <your-github-user-lowercase> <commit-sha>     # app at http://localhost/
+
+# Same on EKS, if you created it with Terraform (paid)
 ./scripts/bootstrap-cluster.sh <your-github-user-lowercase> <commit-sha>
 
-# Or step by step
+# Or step by step on any cluster
 kubectl apply -f k8s/namespace.yaml
 helm upgrade --install spendwise helm/spendwise -n spendwise \
   --set global.imageRegistry=ghcr.io/<owner> --set global.imageTag=<sha>
@@ -182,11 +181,11 @@ kubectl port-forward -n monitoring svc/monitoring-grafana 3001:80
 
 ## 7. Live demo script
 
-1. Show the app at the Ingress URL and add a few expenses.
+1. Show the app at `http://localhost/` (the local kind cluster) and add a few expenses.
 2. Make a visible change, for example the subtitle in [frontend/src/App.jsx](frontend/src/App.jsx).
 3. `git commit -am "Update dashboard subtitle" && git push`
-4. Watch GitHub Actions run tests, build, Trivy, the GHCR push, and the deploy.
-5. Run `kubectl get pods -n spendwise -w` to watch the rolling update to the new SHA.
+4. Watch GitHub Actions run tests, build, Trivy, the GHCR push, and **Deploy to Kubernetes (kind)**, ending with the smoke test passing on the new SHA.
+5. Roll the local cluster to the new SHA with `helm upgrade`, and watch `kubectl get pods -n spendwise -w`.
 6. Refresh the browser to see the change. Then open Grafana and point out the request spike.
 
 ---
@@ -221,6 +220,10 @@ sudo install -m 0755 kubectl /usr/local/bin/kubectl && rm kubectl
 
 # Helm 3
 curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+# kind (Kubernetes in Docker)
+curl -fsSLo kind https://kind.sigs.k8s.io/dl/v0.30.0/kind-linux-amd64
+sudo install -m 0755 kind /usr/local/bin/kind && rm kind
 ```
 
 **Docker** (runs natively inside Ubuntu; Docker Desktop is not needed):
@@ -236,23 +239,23 @@ Check that everything is installed:
 
 ```bash
 git --version; python3 --version; node --version; docker version --format '{{.Server.Version}}'; docker compose version
-terraform version | head -1; aws --version; kubectl version --client | head -1; helm version --short
+terraform version | head -1; aws --version; kubectl version --client | head -1; helm version --short; kind version
 ```
 
-### Step 1: Get the code into WSL
+### Step 1: Open the project in WSL
+
+Work directly in the Windows folder, so WSL and your Windows git always see the same files:
 
 ```bash
-cd ~
-git clone https://github.com/Amitabh-Ozymandias/Devops-Final-10104.git
-cd Devops-Final-10104
+cd "/mnt/c/Users/USER/Downloads/DEVOPS FINAL PROJECT"
 ```
 
-> Commit and push from Windows as usual. Before running anything in WSL, run `git pull` in `~/Devops-Final-10104` to pick up your latest changes.
+> Commit and push from Windows as usual. All the commands below run in WSL from this folder.
 
 ### Step 2: Tests and code quality (M2)
 
 ```bash
-cd ~/Devops-Final-10104/backend
+cd "/mnt/c/Users/USER/Downloads/DEVOPS FINAL PROJECT/backend"
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements-dev.txt
@@ -264,7 +267,7 @@ deactivate
 ### Step 3: Run the stack with Docker Compose (M1, M4)
 
 ```bash
-cd ~/Devops-Final-10104
+cd "/mnt/c/Users/USER/Downloads/DEVOPS FINAL PROJECT"
 docker compose up --build      # 📸 terminal showing the three services starting
 ```
 
@@ -303,56 +306,23 @@ The pipeline runs on every push to `main`. Open **GitHub → Actions → CI/CD �
 - 📸 the run summary with all jobs green
 - 📸 open **Build, scan & push (backend)** → expand **Trivy scan**, and capture `Total: 0 (HIGH: 0, CRITICAL: 0)`
 
-Then make the images pullable by the cluster. Go to **GitHub → your profile → Packages**, open `spendwise-backend` → **Package settings** → **Change visibility → Public**, and do the same for `spendwise-frontend`. 📸 a package page showing the commit-SHA tag.
+Make sure the images are pullable by a cluster (already done for this repo). Go to **GitHub → your profile → Packages**, open `spendwise-backend` → **Package settings** → **Change visibility → Public**, and do the same for `spendwise-frontend`. 📸 a package page showing the commit-SHA tag.
 
 Trivy explanation for the submission: see [section 3](#3-security-scan-trivy).
 
-### Step 6: Provision AWS with Terraform (M7)
-
-> 💸 EKS costs roughly $0.25–0.30 per hour while it exists. Do Steps 6 to 10 in one sitting and always finish with Step 11.
-
-Use an **IAM user** (not the root account) with admin permissions. Create its access key in **AWS Console → IAM → Users → Security credentials**.
-
-```bash
-aws configure                  # paste the access key and secret, region us-east-1, output json
-aws sts get-caller-identity    # confirms which identity you're using
-
-cd ~/Devops-Final-10104/terraform
-cp terraform.tfvars.example terraform.tfvars
-
-# Pick a Kubernetes version in standard support (extended support costs ~6x more)
-aws eks describe-cluster-versions --region us-east-1 \
-  --query "clusterVersions[?versionStatus=='STANDARD_SUPPORT'].clusterVersion" --output text
-nano terraform.tfvars          # set kubernetes_version to the newest version listed above
-
-terraform init
-terraform fmt -check && terraform validate
-terraform plan -out=tfplan     # 📸 the plan, ending with "Plan: N to add, 0 to change, 0 to destroy"
-terraform apply tfplan         # takes about 15 minutes
-terraform output
-```
-
-In the AWS Console (region **N. Virginia, us-east-1**):
-
-- 📸 **VPC → Your VPCs** showing `spendwise-vpc`, and **Subnets** showing its 2 public subnets
-- 📸 **EKS → Clusters → spendwise-eks**, Active, with the node group on the **Compute** tab
-
-### Step 7: Deploy to Kubernetes with Helm (M8, M9)
+### Step 6: Kubernetes + Helm on a local kind cluster (M8), free
 
 Use the SHA of the latest commit whose pipeline is green. Images are tagged with it.
 
 ```bash
-cd ~/Devops-Final-10104
-git pull
+cd "/mnt/c/Users/USER/Downloads/DEVOPS FINAL PROJECT"
 export TAG=$(git rev-parse HEAD)
-export POSTGRES_PASSWORD='choose-a-strong-password'   # letters, digits and dashes only; same value as the GitHub secret in Step 8
 
-aws eks update-kubeconfig --region us-east-1 --name spendwise-eks
-kubectl get nodes              # 2 nodes Ready
-
-# Installs the namespaces, Prometheus + Grafana, ingress-nginx and the app (~10 minutes)
-bash scripts/bootstrap-cluster.sh amitabh-ozymandias "$TAG"
+# kind cluster + namespaces + Prometheus/Grafana + ingress-nginx + the app (~10 minutes the first time)
+bash scripts/local-cluster.sh amitabh-ozymandias "$TAG"
 ```
+
+> Port 80 must be free. Stop the compose stack first (`docker compose down`) if it's still running.
 
 Collect the M8 evidence:
 
@@ -361,68 +331,84 @@ kubectl apply -f k8s/namespace.yaml          # shows "unchanged", so it applies 
 kubectl get pods -n spendwise                # 📸 2 backend + 2 frontend + postgres, all Running
 kubectl get svc -n spendwise                 # 📸 ClusterIP services
 helm list -n spendwise                       # 📸 the spendwise release, deployed
-kubectl get ingress -n spendwise             # the ADDRESS column shows the load balancer hostname
-
-export APP_URL=http://$(kubectl get svc -n ingress-nginx ingress-nginx-controller \
-  -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
-echo $APP_URL                                # open it in a browser (allow 2-3 min for DNS). 📸 the app
-curl -s $APP_URL/api/expenses/summary        # /api is routed to the backend
+kubectl get ingress -n spendwise             # 📸 class nginx, address localhost
+curl -s localhost/api/expenses/summary       # /api is routed to the backend
 ```
 
-Collect the M9 evidence:
+In a Windows browser, open **http://localhost/** (served through the Ingress, not compose). 📸 the app.
+
+### Step 7: Observability (M9)
 
 ```bash
 # /metrics from the backend inside the cluster
 kubectl port-forward -n spendwise svc/spendwise-backend 8000:8000 &
-curl -s localhost:8000/metrics | head -40    # 📸
+sleep 2; curl -s localhost:8000/metrics | head -40    # 📸
 kill %1
 
 # Generate traffic so the dashboards have data
 for i in $(seq 1 300); do
-  curl -s $APP_URL/api/expenses > /dev/null
-  curl -s -X POST $APP_URL/api/expenses -H 'Content-Type: application/json' \
+  curl -s localhost/api/expenses > /dev/null
+  curl -s -X POST localhost/api/expenses -H 'Content-Type: application/json' \
     -d "{\"title\":\"Load test $i\",\"amount\":$((RANDOM % 90 + 10)),\"category\":\"Food\",\"spent_on\":\"2026-10-16\"}" > /dev/null
-  curl -s $APP_URL/api/expenses/999999 > /dev/null   # produces 404s for the status panel
+  curl -s localhost/api/expenses/999999 > /dev/null   # produces 404s for the status panel
 done
 
 # Prometheus: http://localhost:9090/targets
 kubectl port-forward -n monitoring svc/monitoring-kube-prometheus-prometheus 9090:9090
 # 📸 the "serviceMonitor/spendwise/spendwise-backend/0" target with 2/2 UP. Press Ctrl+C when done.
 
-# Grafana: http://localhost:3001  (user admin)
+# Grafana: http://localhost:3001  (user admin, password printed below)
 kubectl get secret -n monitoring monitoring-grafana -o jsonpath='{.data.admin-password}' | base64 -d; echo
 kubectl port-forward -n monitoring svc/monitoring-grafana 3001:80
 # Dashboards → "SpendWise - API Overview". 📸 the populated panels
 ```
 
-### Step 8: Turn on automatic deploys (M5, M10)
+### Step 8: Terraform for AWS (M7)
 
-In **GitHub → repo → Settings → Secrets and variables → Actions**:
+The Terraform code is graded, but running the app doesn't need EKS. Two options:
 
-| Tab | Name | Value |
-|---|---|---|
-| Secrets | `AWS_ACCESS_KEY_ID` | same IAM user as `aws configure` |
-| Secrets | `AWS_SECRET_ACCESS_KEY` | same IAM user |
-| Secrets | `POSTGRES_PASSWORD` | the same value you exported in Step 7 |
-| Variables | `DEPLOY_ENABLED` | `true` |
-| Variables | `AWS_REGION` | `us-east-1` |
-| Variables | `EKS_CLUSTER_NAME` | `spendwise-eks` |
+**A. Free: code plus plan only.** This covers `terraform/`, `init`, `plan` and `tfvars.example`, about 6 of 15 points. `plan` creates nothing and costs nothing. It does need the AWS user to have read permissions. If `aws eks list-clusters --region us-east-1` says AccessDenied, attach **AdministratorAccess** to the `terraform-demo` user in **IAM → Users → terraform-demo → Add permissions**, signed in as the account owner.
 
-Using the same IAM user that ran Terraform means it already has cluster admin access, so `ci_deployer_arn` can stay empty.
+```bash
+cd "/mnt/c/Users/USER/Downloads/DEVOPS FINAL PROJECT/terraform"
+cp terraform.tfvars.example terraform.tfvars
+terraform init
+terraform fmt -check && terraform validate
+terraform plan                 # 📸 ends with "Plan: N to add, 0 to change, 0 to destroy"
+```
+
+**B. Full M7 points: apply, screenshot, destroy at once** (~40 minutes, under $0.50):
+
+```bash
+# Use a Kubernetes version in standard support (extended support costs ~6x more)
+aws eks describe-cluster-versions --region us-east-1 \
+  --query "clusterVersions[?versionStatus=='STANDARD_SUPPORT'].clusterVersion" --output text
+nano terraform.tfvars          # set kubernetes_version to the newest version listed above
+
+terraform apply                # type "yes"; takes ~15 minutes
+```
+
+- 📸 AWS Console, region **N. Virginia (us-east-1)**: **VPC → Your VPCs** (`spendwise-vpc`), **Subnets** (2 public), and **EKS → Clusters → spendwise-eks**, Active, with the node group on the **Compute** tab.
+
+```bash
+terraform destroy              # type "yes". 📸 "Destroy complete! Resources: N destroyed."
+aws eks list-clusters --region us-east-1                                   # should be empty
+aws ec2 describe-vpcs --region us-east-1 --filters Name=tag:Project,Values=spendwise --query 'Vpcs[].VpcId'   # []
+```
 
 ### Step 9: Live demo (M10)
 
-1. In **Windows**, change something visible. For example, edit the subtitle text `Track where your money goes.` in `frontend/src/App.jsx`.
-2. Commit and push from Windows: `git commit -am "Change dashboard subtitle for live demo"` then `git push`.
-3. In WSL, watch the pods roll over to the new image:
+1. Have `http://localhost/` open, served by the kind cluster from Step 6.
+2. In **Windows**, change something visible. For example, edit the subtitle text `Track where your money goes.` in `frontend/src/App.jsx`.
+3. Commit and push from Windows: `git commit -am "Change dashboard subtitle for live demo"` then `git push`.
+4. In **GitHub → Actions**, follow the run: tests → frontend build → image build → Trivy → GHCR push → **Deploy to Kubernetes (kind)**. That job deploys the new SHA with Helm and smoke-tests it through the Ingress.
+5. When it's green, roll your local cluster to the same commit and watch the rolling update (in WSL):
    ```bash
-   kubectl get pods -n spendwise -w
-   ```
-4. In the browser, follow the run in **GitHub → Actions**: tests → build → Trivy → push → **Deploy to EKS**.
-5. Refresh `$APP_URL` to see the new subtitle, and confirm the image tag changed:
-   ```bash
+   helm upgrade spendwise helm/spendwise -n spendwise --reuse-values --set global.imageTag=$(git rev-parse HEAD)
+   kubectl get pods -n spendwise -w           # old pods terminate, new ones start. Ctrl+C when settled
    kubectl get deploy -n spendwise -o jsonpath='{range .items[*]}{.metadata.name}{" -> "}{.spec.template.spec.containers[0].image}{"\n"}{end}'
    ```
+6. Refresh `http://localhost/` to see the new subtitle. Then show Grafana.
 
 ### Step 10: Save the screenshots
 
@@ -434,20 +420,13 @@ git commit -m "Add submission screenshots"
 git push
 ```
 
-### Step 11: Tear everything down (M7)
+### Step 11: Clean up
 
 ```bash
-cd ~/Devops-Final-10104
-bash scripts/teardown.sh       # uninstalls Helm releases (deletes the load balancer), then terraform destroy
-# 📸 "Destroy complete! Resources: N destroyed."
-
-# Confirm nothing billable is left
-aws eks list-clusters --region us-east-1                       # []
-aws elbv2 describe-load-balancers --region us-east-1 --query 'LoadBalancers[].LoadBalancerName'   # []
-aws ec2 describe-vpcs --region us-east-1 --filters Name=tag:Project,Values=spendwise --query 'Vpcs[].VpcId'   # []
+kind delete cluster --name spendwise        # removes the local cluster and frees disk space
+docker compose down -v                      # if the compose stack is still around
+# If you ran Step 8 B, confirm that `terraform destroy` finished (see above)
 ```
-
-Also set the `DEPLOY_ENABLED` variable back to `false`, so later pushes don't try to deploy to a cluster that no longer exists.
 
 ### Screenshot checklist
 
@@ -457,10 +436,10 @@ Also set the `DEPLOY_ENABLED` variable back to `false`, so later pushes don't tr
 | M4 | `docker compose up --build` output | 3 |
 | M2 | `pytest -v`, all passing | 2 |
 | M3 | Commit history (10+ commits) | 4 |
-| M5 | Green Actions run, plus the GHCR package with its SHA tag | 5 |
+| M5 | Green Actions run (including Deploy to Kubernetes), plus the GHCR package with its SHA tag | 5 |
 | M6 | Trivy step output | 5 |
-| M7 | `terraform plan`, VPC + EKS in the console, `terraform destroy` | 6, 11 |
-| M8 | `kubectl get pods`, `kubectl get svc`, `helm list`, app via the Ingress | 7 |
+| M7 | `terraform plan`; with option B also VPC + EKS in the console and `terraform destroy` | 8 |
+| M8 | `kubectl get pods`, `kubectl get svc`, `helm list`, app via the Ingress at `http://localhost/` | 6 |
 | M9 | `/metrics`, Prometheus target UP, Grafana dashboard | 7 |
 | M10 | Live demo (or a recording of Step 9) | 9 |
 
@@ -472,10 +451,10 @@ Also set the `DEPLOY_ENABLED` variable back to `false`, so later pushes don't tr
 backend/            FastAPI app, Alembic migrations, tests, Dockerfile
 frontend/           React app, Nginx config, multi-stage Dockerfile
 .github/workflows/  CI/CD pipeline
-terraform/          AWS VPC + EKS
-k8s/                Namespace manifests
+terraform/          AWS VPC + EKS (optional, paid)
+k8s/                Namespace manifests, kind cluster config
 helm/spendwise/     Helm chart for the app
 monitoring/         Helm values for Prometheus/Grafana and ingress-nginx, dashboard JSON
-scripts/            Cluster bootstrap and teardown helpers
+scripts/            local-cluster.sh (kind, used by CI), EKS bootstrap/teardown
 docs/screenshots/   Screenshots for the submission
 ```
