@@ -264,6 +264,30 @@ kubectl port-forward -n monitoring svc/monitoring-grafana 3001:80
 # http://localhost:3001  (admin / spendwise-admin) → Dashboards → SpendWise - API Overview
 ```
 
+Prometheus (kube-prometheus-stack in minikube) scraping both backend pods through the chart's ServiceMonitor: `serviceMonitor/spendwise/spendwise-backend/0`, **2/2 up**:
+
+![Prometheus target health: spendwise-backend 2/2 up](docs/screenshots/m9-prometheus-targets-spendwise.png)
+
+Querying the app's metrics. `up{namespace="spendwise"}` is 1 for each backend pod, and `http_requests_total` is broken down by endpoint and method:
+
+![Prometheus query: up](docs/screenshots/m9-prometheus-query-up.png)
+![Prometheus query: request rate by endpoint](docs/screenshots/m9-prometheus-query-request-rate.png)
+
+The **SpendWise - API Overview** Grafana dashboard with live application metrics: request rate by endpoint, responses by status (2xx and 4xx), p50/p95/p99 latency, expenses created per category, and backend pods up:
+
+![Grafana SpendWise dashboard](docs/screenshots/m9-grafana-dashboard.png)
+![Grafana dashboard: latency and expenses panels](docs/screenshots/m9-grafana-dashboard-panels.png)
+
+<details>
+<summary>More: Prometheus UI and other scrape targets</summary>
+
+![Prometheus query page](docs/screenshots/m9-prometheus-ui.png)
+![Target: Grafana](docs/screenshots/m9-prometheus-targets-grafana.png)
+![Target: Kubernetes API server](docs/screenshots/m9-prometheus-targets-apiserver.png)
+![Grafana dashboard top row](docs/screenshots/m9-grafana-dashboard-top.png)
+
+</details>
+
 ---
 
 ## 7. Live demo script
