@@ -1,3 +1,5 @@
+The documentation is in the docs folder.
+
 # SpendWise: Expense Tracker on a Full DevOps Pipeline
 
 SpendWise is a small personal finance app. You record expenses (title, amount, category, date, notes), filter them by category, and see totals per category on a dashboard. The app itself is simple on purpose. The project is about the delivery pipeline around it: tests, containers, CI/CD with a security gate, AWS infrastructure as code, Kubernetes with Helm, and monitoring.
