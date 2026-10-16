@@ -58,6 +58,30 @@ docker compose up --build
 - Frontend: http://localhost:3000
 - Backend: http://localhost:8000/health and http://localhost:8000/docs
 
+The app at `http://localhost:3000`, adding an expense and then the updated list with totals:
+
+![SpendWise add-expense form](docs/screenshots/m1-app-add-expense.png)
+![SpendWise expense list with category totals](docs/screenshots/m1-app-expense-list.png)
+
+`docker compose up --build`: both images built and the three services created (frontend, backend, postgres):
+
+![docker compose: containers created](docs/screenshots/m4-compose-containers-created.png)
+
+The backend runs the Alembic migration (`create expenses table`), starts Uvicorn, then serves health checks and API calls proxied by the frontend's Nginx:
+
+![Backend migration and requests](docs/screenshots/m1-backend-migration-and-requests.png)
+
+<details>
+<summary>Full build and startup log (5 more screenshots)</summary>
+
+![Build log part 1: base images and multi-stage build](docs/screenshots/m4-compose-build-1.png)
+![Build log part 2](docs/screenshots/m4-compose-build-2.png)
+![Build log part 3: npm build and pip wheels](docs/screenshots/m4-compose-build-3.png)
+![Build log part 4: images exported](docs/screenshots/m4-compose-build-4.png)
+![Frontend Nginx startup](docs/screenshots/m4-compose-frontend-logs.png)
+
+</details>
+
 To override the default database credentials, copy `.env.example` to `.env` and edit it.
 
 ### Run tests
@@ -71,6 +95,8 @@ pytest -v
 ```
 
 The tests use an in-memory SQLite database. [backend/tests/conftest.py](backend/tests/conftest.py) sets this up by overriding the `get_db` dependency, so the tests never touch PostgreSQL. There are 13 tests covering health, metrics, and every expense endpoint, including validation and 404 cases.
+
+![pytest -v: 13 passed](docs/screenshots/m2-pytest-passing.png)
 
 ---
 
