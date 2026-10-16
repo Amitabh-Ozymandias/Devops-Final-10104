@@ -391,36 +391,39 @@ kubectl port-forward -n monitoring svc/monitoring-grafana 3001:80
 
 ### Step 8: Terraform for AWS (M7)
 
-The Terraform code is graded, but running the app doesn't need EKS. Two options:
+EKS is switchable with `create_eks` in `terraform.tfvars`. Running the app never needs it, because CI and the demo use kind/minikube.
 
-**A. Free: code plus plan only.** This covers `terraform/`, `init`, `plan` and `tfvars.example`, about 6 of 15 points. `plan` creates nothing and costs nothing. It does need the AWS user to have read permissions. If `aws eks list-clusters --region us-east-1` says AccessDenied, attach **AdministratorAccess** to the `terraform-demo` user in **IAM → Users → terraform-demo → Add permissions**, signed in as the account owner.
+**A. Free: VPC only (`create_eks = false`, the default).** Creates a real VPC with 2 public subnets, an internet gateway and route tables. All of these are free, and they work on AWS **Free-plan** accounts, which block EKS.
 
 ```bash
 cd "/mnt/c/Users/USER/Downloads/DEVOPS FINAL PROJECT/terraform"
-cp terraform.tfvars.example terraform.tfvars
+cp terraform.tfvars.example terraform.tfvars   # create_eks = false
 terraform init
 terraform fmt -check && terraform validate
 terraform plan                 # 📸 ends with "Plan: N to add, 0 to change, 0 to destroy"
+terraform apply                # type "yes"; about 1 minute
+terraform output
 ```
 
-**B. Full M7 points: apply, screenshot, destroy at once** (~40 minutes, under $0.50):
+- 📸 AWS Console, region **N. Virginia (us-east-1)**: **VPC → Your VPCs** (`spendwise-vpc`) and **VPC → Subnets** (the 2 `spendwise-vpc-public-…` subnets).
+
+```bash
+terraform destroy              # type "yes". 📸 "Destroy complete! Resources: N destroyed."
+aws ec2 describe-vpcs --region us-east-1 --filters Name=tag:Project,Values=spendwise --query 'Vpcs[].VpcId'   # []
+```
+
+**B. With EKS (`create_eks = true`).** This needs a Paid-plan account; credits still apply. It costs about $0.25–0.30 per hour, so plan on ~40 minutes and under $0.50 in total.
 
 ```bash
 # Use a Kubernetes version in standard support (extended support costs ~6x more)
 aws eks describe-cluster-versions --region us-east-1 \
   --query "clusterVersions[?versionStatus=='STANDARD_SUPPORT'].clusterVersion" --output text
-nano terraform.tfvars          # set kubernetes_version to the newest version listed above
+nano terraform.tfvars          # create_eks = true, kubernetes_version = newest listed above
 
 terraform apply                # type "yes"; takes ~15 minutes
 ```
 
-- 📸 AWS Console, region **N. Virginia (us-east-1)**: **VPC → Your VPCs** (`spendwise-vpc`), **Subnets** (2 public), and **EKS → Clusters → spendwise-eks**, Active, with the node group on the **Compute** tab.
-
-```bash
-terraform destroy              # type "yes". 📸 "Destroy complete! Resources: N destroyed."
-aws eks list-clusters --region us-east-1                                   # should be empty
-aws ec2 describe-vpcs --region us-east-1 --filters Name=tag:Project,Values=spendwise --query 'Vpcs[].VpcId'   # []
-```
+- 📸 additionally **EKS → Clusters → spendwise-eks**, Active, with the node group on the **Compute** tab. Then run `terraform destroy` exactly as in option A.
 
 ### Step 9: Live demo (M10)
 
@@ -464,7 +467,7 @@ docker compose down -v                      # if the compose stack is still arou
 | M3 | Commit history (10+ commits) | 4 |
 | M5 | Green Actions run (including Deploy to Kubernetes), plus the GHCR package with its SHA tag | 5 |
 | M6 | Trivy step output | 5 |
-| M7 | `terraform plan`; with option B also VPC + EKS in the console and `terraform destroy` | 8 |
+| M7 | `terraform plan`, VPC + subnets in the console, `terraform destroy` (EKS too with option B) | 8 |
 | M8 | `kubectl get pods`, `kubectl get svc`, `helm list`, app via the Ingress at `http://localhost/` | 6 |
 | M9 | `/metrics`, Prometheus target UP, Grafana dashboard | 7 |
 | M10 | Live demo (or a recording of Step 9) | 9 |
