@@ -223,12 +223,19 @@ sudo install -m 0755 kubectl /usr/local/bin/kubectl && rm kubectl
 curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 ```
 
-**Docker:** in Windows, open Docker Desktop → **Settings → Resources → WSL integration**, turn on **Ubuntu**, then click **Apply & restart**.
+**Docker** (runs natively inside Ubuntu; Docker Desktop is not needed):
+
+```bash
+sudo apt install -y docker.io docker-compose-v2 docker-buildx
+sudo usermod -aG docker $USER     # then close and reopen the Ubuntu terminal
+```
+
+> If `docker compose` says `unknown flag: --build` or `unknown command`, the compose plugin is missing. Run the `apt install` line above.
 
 Check that everything is installed:
 
 ```bash
-git --version; python3 --version; node --version; docker version --format '{{.Server.Version}}'
+git --version; python3 --version; node --version; docker version --format '{{.Server.Version}}'; docker compose version
 terraform version | head -1; aws --version; kubectl version --client | head -1; helm version --short
 ```
 
