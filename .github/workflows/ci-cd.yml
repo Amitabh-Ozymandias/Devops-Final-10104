@@ -126,45 +126,56 @@ jobs:
 
   # ------------------------------------------------------------- deploy
   deploy:
-    name: Deploy to EKS
+    name: Deploy to Kubernetes (kind)
     needs: images
-    # Opt-in: set the repository variable DEPLOY_ENABLED=true once the EKS
-    # cluster exists and the AWS secrets are configured.
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.DEPLOY_ENABLED == 'true'
+    # Deploys the freshly pushed images to a throwaway kind cluster on the
+    # runner: same Helm chart and Ingress as production, no cloud cost.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    environment: production
     env:
-      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
-      CLUSTER_NAME: ${{ vars.EKS_CLUSTER_NAME || 'spendwise-eks' }}
+      KIND_VERSION: v0.30.0
       NAMESPACE: spendwise
     steps:
       - uses: actions/checkout@v4
-
-      - uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
 
       - uses: azure/setup-helm@v4
         with:
           version: v3.16.3
 
-      - name: Configure kubectl
-        run: aws eks update-kubeconfig --name "$CLUSTER_NAME" --region "$AWS_REGION"
+      - name: Install kind
+        run: |
+          curl -fsSLo kind "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
+          sudo install -m 0755 kind /usr/local/bin/kind
 
-      - name: Helm upgrade
+      - name: Helm upgrade --install (cluster + ingress + app)
+        env:
+          SKIP_MONITORING: "1"
         run: |
           owner="$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
-          kubectl apply -f k8s/namespace.yaml
-          helm upgrade --install spendwise helm/spendwise \
-            --namespace "$NAMESPACE" \
-            --set global.imageRegistry="ghcr.io/${owner}" \
-            --set global.imageTag="${GITHUB_SHA}" \
-            --set postgresql.auth.password="${{ secrets.POSTGRES_PASSWORD }}" \
-            --wait --timeout 10m
+          bash scripts/local-cluster.sh "$owner" "$GITHUB_SHA"
 
-      - name: Show rollout
+      - name: Verify rollout uses this commit's images
         run: |
-          kubectl get pods -n "$NAMESPACE" -o wide
-          kubectl get ingress -n "$NAMESPACE"
+          for d in spendwise-backend spendwise-frontend; do
+            image="$(kubectl get deploy "$d" -n "$NAMESPACE" -o jsonpath='{.spec.template.spec.containers[0].image}')"
+            echo "$d -> $image"
+            [[ "$image" == *":${GITHUB_SHA}" ]]
+            kubectl rollout status deploy/"$d" -n "$NAMESPACE" --timeout=120s
+          done
+
+      - name: Smoke test through the Ingress
+        run: |
+          for i in $(seq 1 30); do curl -sf http://localhost/api/expenses/summary && break; sleep 2; done
+          echo
+          curl -sf http://localhost/ | grep -q "<title>SpendWise</title>"
+          payload='{"title":"CI smoke test","amount":1.5,"category":"Other","spent_on":"2026-01-01"}'
+          curl -sf -X POST http://localhost/api/expenses -H 'Content-Type: application/json' -d "$payload"
+          echo
+          curl -sf http://localhost/api/expenses | grep -q "CI smoke test"
+          echo "Frontend and API reachable through the Ingress"
+
+      - name: Show deployment
+        if: always()
+        run: |
+          kubectl get pods,svc,ingress -n "$NAMESPACE" -o wide
+          helm list -n "$NAMESPACE"

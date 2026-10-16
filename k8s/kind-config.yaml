@@ -1,0 +1,21 @@
+# Local / CI Kubernetes cluster for SpendWise (no cloud cost).
+#   kind create cluster --name spendwise --config k8s/kind-config.yaml
+# Ports 80/443 on the host are forwarded to the ingress-nginx controller,
+# so the app is reachable at http://localhost/ once the chart is installed.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+    kubeadmConfigPatches:
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "ingress-ready=true"
+    extraPortMappings:
+      - containerPort: 80
+        hostPort: 80
+        protocol: TCP
+      - containerPort: 443
+        hostPort: 443
+        protocol: TCP
